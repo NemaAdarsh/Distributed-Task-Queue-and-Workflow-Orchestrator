@@ -1,0 +1,62 @@
+name: "ML Model Training Pipeline"
+description: "Train and deploy machine learning model"
+
+config:
+  max_concurrency: 2
+  timeout: "4h"
+  retry_policy:
+    max_attempts: 2
+    initial_delay: "30s"
+    max_delay: "10m"
+    backoff_factor: 3.0
+
+tasks:
+  - name: "prepare_dataset"
+    type: "etl"
+    payload:
+      source_url: "s3://ml-data/raw/"
+      target_url: "s3://ml-data/processed/"
+      preprocessing: "normalize_and_split"
+    priority: 1
+
+  - name: "feature_engineering"
+    type: "ml_training"
+    depends_on: ["prepare_dataset"]
+    payload:
+      dataset_url: "s3://ml-data/processed/"
+      feature_store: "s3://ml-features/"
+      features: ["numerical", "categorical", "embeddings"]
+    priority: 2
+
+  - name: "train_model"
+    type: "ml_training"
+    depends_on: ["feature_engineering"]
+    payload:
+      model_name: "fraud_detection_v2"
+      dataset_url: "s3://ml-features/"
+      algorithm: "xgboost"
+      hyperparameters:
+        max_depth: 6
+        learning_rate: 0.1
+        n_estimators: 100
+    priority: 3
+    max_retries: 1
+
+  - name: "validate_model"
+    type: "ml_training"
+    depends_on: ["train_model"]
+    payload:
+      model_name: "fraud_detection_v2"
+      validation_dataset: "s3://ml-data/validation/"
+      metrics: ["accuracy", "precision", "recall", "f1"]
+      threshold: 0.85
+    priority: 4
+
+  - name: "deploy_model"
+    type: "generic"
+    depends_on: ["validate_model"]
+    payload:
+      command: "deploy_model_to_production"
+      model_name: "fraud_detection_v2"
+      endpoint: "ml-api.company.com/fraud-detection"
+    priority: 5

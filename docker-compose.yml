@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_DB: flowctl
+      POSTGRES_USER: flowctl
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowctl"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.scheduler
+    ports:
+      - "8080:8080"
+    environment:
+      - POSTGRES_URL=postgres://flowctl:password@postgres:5432/flowctl?sslmode=disable
+      - REDIS_URL=redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  worker-etl:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      - REDIS_URL=redis:6379
+      - TASK_TYPES=etl
+      - WORKER_ADDR=worker-etl:9000
+      - SCHEDULER_URL=http://scheduler:8080
+    depends_on:
+      redis:
+        condition: service_healthy
+      scheduler:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+
+  worker-ml:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      - REDIS_URL=redis:6379
+      - TASK_TYPES=ml_training
+      - WORKER_ADDR=worker-ml:9000
+      - SCHEDULER_URL=http://scheduler:8080
+    depends_on:
+      redis:
+        condition: service_healthy
+      scheduler:
+        condition: service_healthy
+
+  worker-ci:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      - REDIS_URL=redis:6379
+      - TASK_TYPES=ci
+      - WORKER_ADDR=worker-ci:9000
+      - SCHEDULER_URL=http://scheduler:8080
+    depends_on:
+      redis:
+        condition: service_healthy
+      scheduler:
+        condition: service_healthy
+
+  worker-generic:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      - REDIS_URL=redis:6379
+      - TASK_TYPES=generic
+      - WORKER_ADDR=worker-generic:9000
+      - SCHEDULER_URL=http://scheduler:8080
+    depends_on:
+      redis:
+        condition: service_healthy
+      scheduler:
+        condition: service_healthy
+    deploy:
+      replicas: 3
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,62 @@
+name: "ETL Data Pipeline"
+description: "Extract data from source, transform, and load to warehouse"
+
+config:
+  max_concurrency: 5
+  timeout: "2h"
+  retry_policy:
+    max_attempts: 3
+    initial_delay: "10s"
+    max_delay: "5m"
+    backoff_factor: 2.0
+
+tasks:
+  - name: "extract_source_a"
+    type: "etl"
+    payload:
+      source_url: "s3://data-bucket/source-a/"
+      target_url: "temp://staging/source-a"
+      format: "json"
+    priority: 1
+
+  - name: "extract_source_b"
+    type: "etl"
+    payload:
+      source_url: "postgres://db.example.com/table_b"
+      target_url: "temp://staging/source-b"
+      format: "parquet"
+    priority: 1
+
+  - name: "validate_data"
+    type: "generic"
+    depends_on: ["extract_source_a", "extract_source_b"]
+    payload:
+      command: "validate_data_quality"
+      sources: ["temp://staging/source-a", "temp://staging/source-b"]
+    priority: 2
+
+  - name: "transform_data"
+    type: "etl"
+    depends_on: ["validate_data"]
+    payload:
+      source_url: "temp://staging/"
+      target_url: "s3://warehouse/processed/"
+      transformation: "join_and_aggregate"
+    priority: 3
+
+  - name: "load_warehouse"
+    type: "etl"
+    depends_on: ["transform_data"]
+    payload:
+      source_url: "s3://warehouse/processed/"
+      target_url: "snowflake://warehouse.analytics.fact_table"
+    priority: 4
+    max_retries: 5
+
+  - name: "update_metadata"
+    type: "generic"
+    depends_on: ["load_warehouse"]
+    payload:
+      command: "update_catalog_metadata"
+      table: "analytics.fact_table"
+    priority: 5

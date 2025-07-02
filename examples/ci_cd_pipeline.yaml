@@ -1,0 +1,88 @@
+name: "CI/CD Pipeline"
+description: "Continuous integration and deployment pipeline"
+
+config:
+  max_concurrency: 3
+  timeout: "1h"
+  retry_policy:
+    max_attempts: 2
+    initial_delay: "5s"
+    max_delay: "2m"
+    backoff_factor: 2.0
+
+tasks:
+  - name: "checkout_code"
+    type: "ci"
+    payload:
+      repo_url: "https://github.com/company/app.git"
+      branch: "main"
+      command: "git clone"
+    priority: 1
+
+  - name: "run_tests"
+    type: "ci"
+    depends_on: ["checkout_code"]
+    payload:
+      repo_url: "."
+      command: "npm test"
+      environment: "test"
+    priority: 2
+
+  - name: "security_scan"
+    type: "ci"
+    depends_on: ["checkout_code"]
+    payload:
+      repo_url: "."
+      command: "npm audit --audit-level=high"
+    priority: 2
+
+  - name: "build_application"
+    type: "ci"
+    depends_on: ["run_tests", "security_scan"]
+    payload:
+      repo_url: "."
+      command: "npm run build"
+      environment: "production"
+    priority: 3
+
+  - name: "build_docker_image"
+    type: "ci"
+    depends_on: ["build_application"]
+    payload:
+      repo_url: "."
+      command: "docker build -t app:latest ."
+    priority: 4
+
+  - name: "push_to_registry"
+    type: "ci"
+    depends_on: ["build_docker_image"]
+    payload:
+      repo_url: "."
+      command: "docker push registry.company.com/app:latest"
+    priority: 5
+
+  - name: "deploy_staging"
+    type: "generic"
+    depends_on: ["push_to_registry"]
+    payload:
+      command: "kubectl apply -f k8s/staging/"
+      environment: "staging"
+    priority: 6
+
+  - name: "integration_tests"
+    type: "ci"
+    depends_on: ["deploy_staging"]
+    payload:
+      repo_url: "."
+      command: "npm run test:integration"
+      environment: "staging"
+    priority: 7
+
+  - name: "deploy_production"
+    type: "generic"
+    depends_on: ["integration_tests"]
+    payload:
+      command: "kubectl apply -f k8s/production/"
+      environment: "production"
+    priority: 8
+    max_retries: 1
